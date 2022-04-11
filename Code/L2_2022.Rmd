@@ -1,0 +1,166 @@
+---
+title: "An Overview of Modeling Process" 
+author: "Yifei Sun"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '2'
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lipsum}
+- \pagestyle{fancy}
+- \fancyhead[R]{\thepage}
+- \fancypagestyle{plain}{\pagestyle{fancy}}
+--- 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+
+\newpage
+
+```{r}
+library(caret)
+library(FNN) # knn.reg()
+library(doBy) # which.minn()
+
+set.seed(2022)
+```
+
+The goal of this tutorial is to provide an overview of the modeling process. The functions from the package `caret` will be discussed in details in our future lectures.
+
+You can generate a simulated training dataset or use an existing dataset. For illustration, we use a simulated dataset with two predictors.
+
+```{r}
+# Data generating - you can replace this with your own function
+genData <- function(N)
+{
+  X1 <- rnorm(N, mean = 1)
+  X2 <- rnorm(N, mean = 1)
+  eps <- rnorm(N, sd = .5)
+  Y <- sin(X1) + (X2)^2 + eps 
+  # Y <- X1 + X2 + eps
+  data.frame(Y = Y, X1 = X1, X2 = X2)
+}
+
+dat <- genData(500)
+```
+
+# Data partition
+
+```{r}
+indexTrain <- createDataPartition(y = dat$Y, p = 0.8, list = FALSE)
+trainData <- dat[indexTrain, ]
+testData <- dat[-indexTrain, ]
+
+head(trainData)
+```
+
+# Data visualization
+
+The function `featurePlot()` in `caret` is a wrapper for different lattice plots to visualize multivariate data. The various graphical parameters (color, line type, background, etc) that control the look of Trellis displays are highly customizable. You can explore `trellis.par.set()` after class.
+
+```{r, fig.height = 4}
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2, .4, .2, .5)
+theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8, .1, .1, 1)
+theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+
+featurePlot(x = trainData[ ,2:3], 
+            y = trainData[ ,1], 
+            plot = "scatter", 
+            span = .5, 
+            labels = c("Predictors","Y"),
+            type = c("p", "smooth"),
+            layout = c(2, 1))
+```
+
+
+# What is k-Nearest Neighbour?
+
+Now let's make prediction for a new data point with `X1 = 0` and `X2 = 0`.
+
+```{r}
+# scatter plot of X2 vs. X
+p <- ggplot(trainData, aes(x = X1, y = X2)) + geom_point() +
+  geom_point(aes(x = 0, y = 0), colour="blue")
+ 
+p 
+
+# find the 5 nearest neighbours of (0,0)
+dist0 <- sqrt( (trainData[,2] - 0)^2 + (trainData[,3] - 0)^2 ) # calculate the distances 
+neighbor0 <- which.minn(dist0, n = 5) # indices of the 5 smallest distances
+
+# visualize the neighbours
+p + geom_point(data = trainData[neighbor0, ], 
+               colour = "red")
+
+# calculate the mean outcome of the nearest neighbours as the predicted outcome
+mean(trainData[neighbor0,1])
+
+# Using the knn.reg() function 
+knn.reg(train = trainData[,2:3], 
+        test = c(0,0), 
+        y = trainData[,1], 
+        k = 5)
+```
+
+# Model training
+
+We consider two candidate models: KNN and linear regression.
+
+```{r}
+kGrid <- expand.grid(k = seq(from = 1, to = 40, by = 1))
+
+set.seed(1)
+fit.knn <- train(Y ~ ., 
+                 data = trainData,
+                 method = "knn",
+                 trControl = trainControl(method = "cv", number = 10), # ten-fold cross-validation
+                 tuneGrid = kGrid)
+
+ggplot(fit.knn)
+# plot(fit.knn)
+```
+
+The kNN approach (k = `r fit.knn$bestTune[1,1]`) was selected as the final model.
+
+```{r}
+set.seed(1)
+fit.lm <- train(Y ~ ., 
+                data = trainData,
+                method = "lm",
+                trControl = trainControl(method = "cv", number = 10))
+```
+
+Which is better?
+
+```{r}
+rs <- resamples(list(knn = fit.knn, lm = fit.lm))
+
+summary(rs, metric = "RMSE")
+```
+
+
+# Evaluating the model on the test data
+
+```{r}
+pred.knn <- predict(fit.knn, newdata = testData)
+pred.lm <- predict(fit.lm, newdata = testData)
+
+RMSE(pred.knn, testData[,1])
+RMSE(pred.lm, testData[,1])
+```
+
+
+
+
+

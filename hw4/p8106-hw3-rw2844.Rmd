@@ -1,0 +1,320 @@
+---
+title: "P8106-hw3"
+author: 
+ - Renjie Wei
+ - rw2844
+date: "3/19/2022"
+output:
+  pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+```{r}
+library(ISLR)
+library(mlbench)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(party)
+library(partykit)
+library(pROC)
+library(randomForest)
+library(ranger)
+library(gbm)
+library(pdp)
+library(ggplot2)
+```
+
+
+Split the dataset into two parts: training data (80%) and test data (20%).
+```{r}
+# I removed the id variable `College`
+data <- read.csv("College.csv")[,-1]
+data <- na.omit(data)
+set.seed(2022)
+# sum(is.na(data)) = 0
+rowTrain <- createDataPartition(y = data$Outstate, p = 0.8, list = FALSE)
+```
+
+## Problem 1
+
+### Part A
+
+Build a regression tree on the training data to predict the response. Create a plot of the tree.
+
+### Answers
+
+First, I built the regression tree model using `caret`.
+```{r problem_1_a_fit}
+ctrl <- trainControl(method = "cv")
+
+set.seed(2022)
+rpart.fit <- train(Outstate ~ . , 
+                   data[rowTrain,], 
+                   method = "rpart",
+                   tuneGrid = data.frame(cp = exp(seq(-6,0, length = 100))),
+                   trControl = ctrl)
+ggplot(rpart.fit, highlight = TRUE) 
+# cp = 0.00482795
+
+```
+
+From the final model, we know that the best tuning parameter `cp` is `r rpart.fit$finalModel$tuneValue[[1]]`. And the following plot shows the final tree.
+
+```{r problem_1_a_plot}
+rpart.plot(rpart.fit$finalModel)
+```
+
+### Part B
+
+Perform random forest on the training data. Report the variable importance and the test error.
+
+### Answers
+
+I built the random forest model using `caret`.
+```{r problem_1_b_fit}
+rf.grid <- expand.grid(mtry = 1:16,
+                       splitrule = "variance",
+                       min.node.size = 1:6)
+set.seed(2022)
+
+library(parallel) 
+no_cores <- detectCores() - 1
+library(doParallel)
+cl <- makePSOCKcluster(no_cores)
+registerDoParallel(cl)
+
+rf.fit <- train(Outstate ~ . , 
+                data, 
+                subset = rowTrain,
+                method = "ranger",
+                tuneGrid = rf.grid,
+                metric = "ROC",
+                trControl = ctrl)
+
+stopCluster(cl)
+registerDoSEQ()
+```
+
+I extracted the variable importance from the fitted model by permutation.
+
+```{r problem_1_b_vi}
+rf.final.per <- ranger(Outstate ~ . , 
+                        data[rowTrain,],
+                        mtry = rf.fit$bestTune[[1]], 
+                        splitrule = "variance",
+                        min.node.size = rf.fit$bestTune[[3]],
+                        importance = "permutation",
+                        scale.permutation.importance = TRUE) 
+
+barplot(sort(ranger::importance(rf.final.per), decreasing = FALSE), 
+        las = 2, horiz = TRUE, cex.names = 0.7,
+        col = colorRampPalette(colors = c("cyan","blue"))(19))
+```
+
+From the variable importance plot we can see that `Expend` and `Room.Board` are the top 2 most important variables.
+
+```{r problem_1_b_test}
+rf.predict <- predict(rf.fit, newdata = data[-rowTrain,])
+rf.RMSE <- RMSE(rf.predict, data$Outstate[-rowTrain])
+```
+
+The RMSE of test set is `r round(rf.RMSE, 3)`.
+
+### Part C
+
+Perform boosting on the training data. Report the variable importance and the test error.
+
+### Answers
+
+I built the boosting model using `caret`.
+```{r problem_1_b_fit}
+gbm.grid <- expand.grid(n.trees = c(2000, 3000, 4000, 5000),
+                        interaction.depth = 1:6,
+                        shrinkage = seq(0.001, 0.005, by = 0.002),
+                        n.minobsinnode = c(3:15))
+    
+set.seed(2022)
+
+no_cores <- detectCores() - 1
+cl <- makePSOCKcluster(no_cores)
+registerDoParallel(cl)
+
+gbm.fit <- train(Outstate ~ . ,
+                 data[rowTrain,],
+                 method = "gbm",
+                 tuneGrid = gbm.grid,
+                 trControl = ctrl,
+                 verbose = FALSE)
+stopCluster(cl)
+registerDoSEQ()
+ggplot(gbm.fit, highlight = TRUE)
+gbm.fit$bestTune
+```
+
+I extracted the variable importance from the fitted model by permutation.
+
+```{r problem_1_b_vi}
+gbm.final.per <- ranger(Outstate ~ . , 
+                        data[rowTrain,],
+                        n.trees = gbm.fit$bestTune[[1]], 
+                        splitrule = "variance",
+                        interaction.depth = gbm.fit$bestTune[[2]],
+                        shrinkage = gbm.fit$bestTune[[3]],
+                        n.minobsinnode = gbm.fit$bestTune[[4]],
+                        importance = "permutation",
+                        scale.permutation.importance = TRUE) 
+
+barplot(sort(ranger::importance(gbm.final.per), decreasing = FALSE), 
+        las = 2, horiz = TRUE, cex.names = 0.7,
+        col = colorRampPalette(colors = c("cyan","blue"))(19))
+```
+
+From the variable importance plot we can see that `Expend` and `Room.Board` are the top 2 most important variables.
+
+```{r problem_1_b_test}
+gbm.predict <- predict(gbm.fit, newdata = data[-rowTrain,])
+gbm.RMSE <- RMSE(gbm.predict, data$Outstate[-rowTrain])
+```
+
+The RMSE of test set is `r round(gbm.RMSE, 3)`.
+
+## Problem 2
+
+I split the dataset into two parts: training data (80%) and test data (20%).
+
+```{r}
+data(OJ)
+OJ <- na.omit(OJ)
+set.seed(2022)
+# sum(is.na(data)) = 0
+rowTrain1 <- createDataPartition(y = OJ$Purchase, p = 0.8, list = FALSE)
+```
+
+### Part A
+
+Build a classification tree using the training data, with `Purchase` as the response and the other variables as predictors. Use cross-validation to determine the tree size and create a plot of the final tree. Which tree size corresponds to the lowest cross-validation error? Is this the same as the tree size obtained using the 1 SE rule?
+
+I use `caret` to fit the classification tree, and plot the final tree. Mentioning that I use `metric = "Accuracy"` to make the model from `caret` comparable to the model from `rpart`.
+
+```{r problem_2_a_fit}
+ctrl1 <- trainControl(method = "cv",
+                     classProbs = TRUE)
+set.seed(2022)
+rpart.fit.OJ <- train(Purchase ~ . , 
+                   OJ, 
+                   subset = rowTrain1,
+                   method = "rpart",
+                   tuneGrid = data.frame(cp = exp(seq(-6,-3, len = 50))),
+                   trControl = ctrl1,
+                   metric = "Accuracy")
+ggplot(rpart.fit.OJ, highlight = TRUE)
+rpart.plot(rpart.fit.OJ$finalModel)
+```
+
+Using the lowest cross-validation error, we can see the tree size = 4.
+
+For the implementation of 1SE rule, I use `rpart` to fit the model.
+
+```{r problem_2_a_1se}
+set.seed(2022)
+tree1 <- rpart(formula = Purchase ~ . , 
+               data = OJ,
+               subset = rowTrain1, 
+               control = rpart.control(cp = 0))
+
+cpTable <- printcp(tree1)
+plotcp(tree1)
+#rpart.plot(tree1)
+```
+```{r problem_2_a_1se_prune}
+# 1SE rule
+minErr <- which.min(cpTable[,4])
+tree2 <- prune(tree1,cp = cpTable[cpTable[,4]<cpTable[minErr,4]+cpTable[minErr,5],1][1])
+rpart.plot(tree2)
+plotcp(tree2)
+```
+
+From the cp plot and cp table, using the 1 SE rule, we can see the tree size = 2.
+
+The tree size obtained by using cross validation is different from the tree size obtained by using 1 SE rule.
+
+### Part B
+
+Perform boosting on the training data and report the variable importance. What is the test error rate?
+
+
+```{r}
+ctrl2 <- trainControl(method = "cv",
+                     classProbs = TRUE, 
+                     summaryFunction = twoClassSummary)
+
+
+gbmA.grid <- expand.grid(n.trees = c(2000,3000,4000,5000),
+                         interaction.depth = 1:6,
+                         shrinkage = c(0.0005,0.001,0.002),
+                         n.minobsinnode = 1)
+set.seed(2022)
+
+no_cores <- detectCores() - 1
+cl <- makePSOCKcluster(no_cores)
+registerDoParallel(cl)
+
+gbmA.fit <- train(Purchase ~ . , 
+                  OJ, 
+                  subset = rowTrain1, 
+                  tuneGrid = gbmA.grid,
+                  trControl = ctrl2,
+                  method = "gbm",
+                  distribution = "adaboost",
+                  metric = "ROC",
+                  verbose = FALSE)
+
+stopCluster(cl)
+registerDoSEQ()
+
+ggplot(gbmA.fit, highlight = TRUE)
+
+gbmA.pred <- predict(gbmA.fit, newdata = OJ[-rowTrain1,], type = "raw")
+error.rate.gbmA <- mean(gbmA.pred != OJ$Purchase[-rowTrain1])
+```
+
+The test error rate is `r round(error.rate.gbmA, 3)`.
+
+```{r xgboost_test, include=FALSE}
+#set.seed(2022)
+#require(xgboost)
+#
+#
+#tune_grid <- expand.grid(
+#  nrounds = seq(from = 200, to = 1000, by = 50),
+#  eta = c(0.025, 0.05, 0.1, 0.3),
+#  max_depth = c(2, 3, 4, 5, 6),
+#  gamma = c(0, 0.05, 0.1, 0.5, 0.7, 0.9, 1.0),
+#  colsample_bytree = c(0.4, 0.6, 0.8, 1.0),
+#  min_child_weight = c(1, 2, 3),
+#  subsample = c(0.5, 0.75, 1.0)
+#)
+#
+#no_cores <- detectCores() - 1
+#cl <- makePSOCKcluster(no_cores)
+#registerDoParallel(cl)
+#
+#
+#xgb_tune <- train(
+#    Purchase ~ . ,
+#    OJ,
+#    subset = rowTrain1,
+#    trControl = ctrl2,
+#    tuneGrid = tune_grid,
+#    method = "xgbTree",
+#    verbose = TRUE
+#    )
+#
+#stopCluster(cl)
+#registerDoSEQ()
+#ggplot(xgb_tune)
+```
+

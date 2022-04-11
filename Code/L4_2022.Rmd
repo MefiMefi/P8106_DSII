@@ -1,0 +1,106 @@
+---
+title: "Linear Regression: A Revisit" 
+author: "Yifei Sun"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '2'
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lipsum}
+- \pagestyle{fancy}
+- \fancyhead[R]{\thepage}
+- \fancypagestyle{plain}{\pagestyle{fancy}}
+--- 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, results = 'asis')
+```
+
+\newpage
+
+```{r}
+library(RNHANES)
+library(tidyverse)
+library(summarytools)
+library(leaps)
+```
+
+# Data
+
+In this example, we assess the association between high density lipoprotein (HDL) cholesterol and body mass index, blood pressure, and other demographic factors (age, gender, race) using the NHANES data (https://wwwn.cdc.gov/nchs/nhanes/ContinuousNhanes/Default.aspx?BeginYear=2001). The data can be downloaded using functions in the package `RNHANES`.
+
+```{r}
+dat <- nhanes_load_data(file_name = "l13_B", year = "2001-2002")
+
+dat = dat %>% 
+  left_join(nhanes_load_data("BMX_B", "2001-2002"), by="SEQN") %>%
+  left_join(nhanes_load_data("BPX_B", "2001-2002"), by="SEQN") %>%
+  left_join(nhanes_load_data("DEMO_B", "2001-2002"), by="SEQN")
+
+dat = dat %>% 
+  select(SEQN, RIAGENDR, RIDRETH1, RIDAGEYR, BMXBMI, BPXSY1, LBDHDL) %>%
+  mutate(RIAGENDR = as_factor(RIAGENDR), RIDRETH1 = as_factor(RIDRETH1))
+
+colnames(dat) <- c("ID", "gender", "race", "age", "bmi", "sbp", "hdl")
+
+dat <- na.omit(dat)
+```
+
+Summary statistics of the predictors and the response:
+
+```{r}
+st_options(plain.ascii = FALSE,       
+           style = "rmarkdown", 
+           dfSummary.silent = TRUE,        
+           footnote = NA,          
+           subtitle.emphasis = FALSE)      
+
+dfSummary(dat[,-1])
+```
+
+# Multiple linear regression: a small experiment
+
+```{r}
+fit1 <- lm(hdl ~ bmi + age + gender + race + sbp,
+           data = dat)
+
+fit2 <- lm(bmi ~ age + gender + race + sbp,
+           data = dat)
+
+r2 <- fit2$residuals
+
+fit3 <- lm(hdl ~ r2,
+           data = dat)
+
+coef(fit1)["bmi"]
+coef(fit3)["r2"]
+```
+
+
+# Prediction interval vs. confidence interval
+
+```{r}
+newdata <- dat[1,]
+predict(fit1, newdata, interval = "confidence") 
+predict(fit1, newdata, interval = "predict") # much wider!
+```
+
+# Best subset model selection
+
+```{r}
+regsubsetsObj <- regsubsets(hdl ~ bmi + age + gender + race + sbp, data = dat, 
+                            method = "exhaustive", nbest = 1) 
+
+plot(regsubsetsObj, scale = "bic")
+
+# summary(regsubsetsObj)
+```
+
+
+
+

@@ -1,0 +1,257 @@
+---
+title: "Classification I"
+author: "Yifei Sun"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '2'
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lipsum}
+- \pagestyle{fancy}
+- \fancyhead[R]{\thepage}
+- \fancypagestyle{plain}{\pagestyle{fancy}}
+--- 
+
+\newpage
+
+
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r, echo = T, message = FALSE, results='hide', warning=FALSE}
+library(caret)
+library(glmnet)
+library(mlbench)
+library(pROC)# another package rocr
+library(pdp)
+library(vip)# variance importance
+library(AppliedPredictiveModeling)# one of text book only for theme
+```
+
+We use the Pima Indians Diabetes Database for illustration. The data contain 768 observations and 9 variables. The outcome is a binary variable `diabetes`. We start from some simple visualization of the data.
+
+```{r}
+data(PimaIndiansDiabetes2)
+dat <- na.omit(PimaIndiansDiabetes2)
+
+theme1 <- transparentTheme(trans = .4)
+trellis.par.set(theme1)
+
+# density is proper for continuous but you should exclude categorical and binary
+featurePlot(x = dat[, 1:8], 
+            y = dat$diabetes,
+            scales = list(x = list(relation = "free"), 
+                          y = list(relation = "free")),
+            plot = "density", pch = "|", 
+            auto.key = list(columns = 2))
+# pch is only for dots shape
+```
+
+The data is divided into two parts (training and test). 
+```{r}
+set.seed(1)
+rowTrain <- createDataPartition(y = dat$diabetes,
+                                p = 0.75,
+                                list = FALSE)
+```
+
+# Logistic regression and its cousins
+
+## `glm`
+
+```{r}
+contrasts(dat$diabetes)
+
+glm.fit <- glm(diabetes ~ ., 
+               data = dat, 
+               subset = rowTrain, 
+               family = binomial(link = "logit"))
+```
+
+We first consider the simple classifier with a cut-off of 0.5 and evaluate its performance on the test data.
+```{r}
+# type = "response" you get the predicted probabilities
+test.pred.prob <- predict(glm.fit, newdata = dat[-rowTrain,],
+                           type = "response")
+test.pred <- rep("neg", length(test.pred.prob))
+test.pred[test.pred.prob>0.5] <- "pos"
+
+# data -> a factor of predicted classes , reference -> factor of true
+confusionMatrix(data = as.factor(test.pred),
+                reference = dat$diabetes[-rowTrain],
+                positive = "pos")
+```
+Confusion Matrix:
+\begin{tabular}{|l|l|l|}
+\hline
+& Observed & \\ \hline
+Predict & Negative & Positive \\ \hline
+Negative & a & b\\ \hline
+Positive & c & d\\ \hline 
+\end{tabular}
+
+- Accuracy: $\frac{a+d}{n}$
+- No Information Rate : $\max(\frac{a+c}{n},\frac{b+d}{n})$
+- Kappa: measures the agreement between classification and truth values
+  - $P_o$: observed , accuracy  $\frac{a+d}{n}$
+  - $P_e$ : probability of agreement by chance, random accuracy, probability that the labels produces by these two processes coincide by chance (assuming independence). $\frac{a+c}{n}\times \frac{a+b}{n} + \frac{b+d}{n}\times \frac{c+d}{n}$
+  - $Kappa = \frac{P_o-P_e}{1-P_e}$
+  - if perfect classifier $P_o = 1$, $Kappa = 1$; if classifier is same as agreement by chance, which means $P_o = P_e$, $Kappa =0$. Also $Kappa$ can be negative, but usually
+  -0.4-0.6
+  -0.6
+  -0.8+
+  
+- Mcnemar test: null hypotheses $P_b = P_c$. The null hypothesis of marginal homogeneity states that the two marginal probabilities for each outcome are the same, e.g.$P_a+P_b =P_a+P_c, P_c+P_d = P_b+P_d $
+- Sensitivity: True Positive Rate, $\frac{d}{b+d}$
+- Specificity: True Negative Rate, $\frac{a}{a+c}$
+- PPV: Positive Predictive Value, $\frac{d}/{c}$
+- NPV:
+- Prevalence: $\frac{b+d}{n}$ 
+- Detection Rate:
+- Detection Prevalence:
+- Balanced Accuracy: mean of sensitivity and specificity
+
+
+We then plot the test ROC curve. You may also consider a smoothed ROC curve.
+```{r}
+roc.glm <- roc(dat$diabetes[-rowTrain], test.pred.prob)
+plot(roc.glm, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(roc.glm), col = 4, add = TRUE)
+```
+
+We can also fit a logistic regression using caret. This is to compare the cross-validation performance with other models, rather than tuning the model.
+
+```{r}
+# Using caret
+ctrl <- trainControl(method = "repeatedcv",
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+set.seed(1)
+model.glm <- train(x = dat[rowTrain,1:8],
+                   y = dat$diabetes[rowTrain],
+                   method = "glm",
+                   metric = "ROC",
+                   trControl = ctrl)
+# seed control the trainControl, the repeated cv procedure
+```
+
+## Penalized logistic regression
+
+Penalized logistic regression can be fitted using `glmnet`. We use the `train` function to select the optimal tuning parameters.
+
+```{r}
+glmnGrid <- expand.grid(.alpha = seq(0, 1, length = 21),
+                        .lambda = exp(seq(-8, -1, length = 50)))
+set.seed(1)
+model.glmn <- train(x = dat[rowTrain,1:8],
+                    y = dat$diabetes[rowTrain],
+                    method = "glmnet",
+                    tuneGrid = glmnGrid,
+                    metric = "ROC",
+                    trControl = ctrl)
+
+model.glmn$bestTune
+
+myCol<- rainbow(25)
+myPar <- list(superpose.symbol = list(col = myCol),
+              superpose.line = list(col = myCol))
+
+plot(model.glmn, par.settings = myPar, xTrans = function(x) log(x))
+```
+Now we want to find the tuning parameters *maximizing* the function
+
+
+## GAM
+
+```{r}
+set.seed(1)
+model.gam <- train(x = dat[rowTrain,1:8],
+                   y = dat$diabetes[rowTrain],
+                   method = "gam",
+                   metric = "ROC",
+                   trControl = ctrl)
+
+
+model.gam$finalModel
+
+plot(model.gam$finalModel, select = 3)
+```
+we see edf 0.0001, means the model try to shrink this term towards zero
+
+## MARS
+
+```{r}
+set.seed(1)
+model.mars <- train(x = dat[rowTrain,1:8],
+                    y = dat$diabetes[rowTrain],
+                    method = "earth",
+                    tuneGrid = expand.grid(degree = 1:4, 
+                                           nprune = 2:20),
+                    metric = "ROC",
+                    trControl = ctrl)
+
+plot(model.mars)
+
+coef(model.mars$finalModel) 
+
+pdp::partial(model.mars, pred.var = c("age"), grid.resolution = 200) %>% autoplot()
+
+vip(model.mars$finalModel)
+vip(model.gam)
+```
+`vip`: variance importance in MARS, each term added to model, if no VIP, means they do not enter the model. Overall impact of variables on regression function.
+
+`nprune` just give a upper-bound of number of terms in final model
+
+In `earth` , a parameter called `penalty`, default `penalty=1` use GCV. If `penalty = -1`, the earth will use RSS, get exactly number of terms equals `nprune`
+
+```{r}
+res <- resamples(list(GLM = model.glm, 
+                      GLMNET = model.glmn, 
+                      GAM = model.gam,
+                      MARS = model.mars))
+summary(res)
+
+bwplot(res, metric = "ROC")
+```
+**Cross-validation** gives the choice of the final model which is the GLMNET
+
+Now let's look at the test data performance.
+```{r, warning=FALSE}
+# we need probability to draw a ROC [,2] select the probability of positive
+glm.pred <- predict(model.glm, newdata = dat[-rowTrain,], type = "prob")[,2]
+glmn.pred <- predict(model.glmn, newdata = dat[-rowTrain,], type = "prob")[,2]
+gam.pred <- predict(model.gam, newdata = dat[-rowTrain,], type = "prob")[,2]
+mars.pred <- predict(model.mars, newdata = dat[-rowTrain,], type = "prob")[,2]
+
+roc.glm <- roc(dat$diabetes[-rowTrain], glm.pred)
+roc.glmn <- roc(dat$diabetes[-rowTrain], glmn.pred)
+roc.gam <- roc(dat$diabetes[-rowTrain], gam.pred)
+roc.mars <- roc(dat$diabetes[-rowTrain], mars.pred)
+
+auc <- c(roc.glm$auc[1], roc.glmn$auc[1], 
+         roc.gam$auc[1], roc.mars$auc[1])
+
+modelNames <- c("glm","glmn","gam","mars")
+
+ggroc(list(roc.glm, roc.glmn, roc.gam, roc.mars), legacy.axes = TRUE) + 
+  scale_color_discrete(labels = paste0(modelNames, " (", round(auc,3),")"),
+                       name = "Models (AUC)") +
+  geom_abline(intercept = 0, slope = 1, color = "grey")
+
+# using plot.roc
+plot(roc.glm, legacy.axes = TRUE)
+plot(roc.glmn, col = 2, add = TRUE)
+plot(roc.gam, col = 3, add = TRUE)
+plot(roc.mars, col = 4, add = TRUE)
+
+legend("bottomright", legend = paste0(modelNames, ": ", round(auc,3)),
+       col = 1:4, lwd = 2)
+```

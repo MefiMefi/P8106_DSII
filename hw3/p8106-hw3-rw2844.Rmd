@@ -1,0 +1,192 @@
+---
+title: "P8106-hw3"
+author: 
+ - Renjie Wei
+ - rw2844
+date: "3/19/2022"
+output:
+  pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+```{r}
+library(caret)
+library(MASS)
+library(mlbench)
+library(pROC)
+library(klaR)
+library(glmnet)
+library(pdp)
+library(vip)
+library(AppliedPredictiveModeling)
+library(summarytools)
+```
+
+
+Split the dataset into two parts: training data (70%) and test data (30%).
+```{r}
+data <- read.csv("auto.csv")
+data <- na.omit(data)
+data$mpg_cat <- as.factor(data$mpg_cat)
+data$mpg_cat <- relevel(data$mpg_cat, "low")
+data$origin <- as.factor(data$origin)
+set.seed(2022)
+# sum(is.na(data)) = 0
+rowTrain <- createDataPartition(y = data$mpg_cat, p = 0.7, list = FALSE)
+```
+
+
+(a) Produce some graphical or numerical summaries of the data
+
+### Answers
+
+Here is a graphical summary for the continuous data
+```{r problem_a}
+theme1 <- transparentTheme(trans = .4)
+trellis.par.set(theme1)
+featurePlot(x = data[, 1:6], 
+            y = data$mpg_cat,
+            scales = list(x = list(relation = "free"), 
+                          y = list(relation = "free")),
+            plot = "density", pch = "|", 
+            auto.key = list(columns = 2))
+
+```
+
+And here is a detailed summary for the total data.
+```{r}
+dfSummary(data[,-1])
+```
+
+
+(b) Perform a logistic regression using the training data. Do any of the predictors appear to be statistically significant? If so, which ones? Compute the confusion matrix and overall fraction of correct predictions using the test data. Briefly explain what the confusion matrix is telling you.
+
+### Answers
+
+```{r problem_b_glm}
+ctrl <- trainControl(method = "repeatedcv", repeats = 5,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+set.seed(2022)
+model.glm <- train(x = data[rowTrain,1:7],
+                   y = data$mpg_cat[rowTrain],
+                   method = "glm",
+                   metric = "ROC",
+                   trControl = ctrl)
+summary(model.glm) # weight and year significant
+```
+From the model summary, it shows that `weight`, `year` and `origin2` (`European`) are statistically significant.
+
+
+We set a cut-off value at 0.5 to build the confusion matrix
+```{r problem_b_confusion_matrix}
+test.pred.prob <- predict(model.glm, newdata = data[-rowTrain,], type = "prob")[,2]
+test.pred = rep("low", length(test.pred.prob))
+test.pred[test.pred.prob>0.5] = "high"
+
+confusionMatrix(data = relevel(as.factor(test.pred), "low"), reference = data$mpg_cat[-rowTrain], positive = "high")
+
+#test.pred.class <- predict(model.glm, newdata = data[-rowTrain,], type = "raw")
+#confusionMatrix(data = test.pred.class, reference = data$mpg_cat[-rowTrain], positive = "high")
+```
+- The confusion matrix gives us the `Accuracy : 0.8534 `, which means the misclassification rate is 1-Accuracy = `r 1-0.8534`. 
+
+- `P-Value [Acc > NIR] : 1.478e-15` means the accuracy is significantly larger than the no information rate which means our classifier is good. 
+
+- `Kappa : 0.7069` evaluate the agreement between the predict result and observed result, and its quiet large, which means this agreement is not by chance.
+
+- Both `Sensitivity : 0.8448` and `Specificity : 0.8621` are large, which also means our classifier is good.
+
+
+```{r problem_b_roc}
+glm.pred <- predict(model.glm, newdata = data[rowTrain,], type = "prob")[,2]
+roc.glm <- roc(data$mpg_cat[rowTrain], glm.pred)
+```
+
+(c) Train a multivariate adaptive regression spline (MARS) model using the training data.
+
+### Answers
+
+```{r problem_c_mars, cache=TRUE}
+set.seed(2022)
+model.mars <- train(x = data[rowTrain,1:7], y = data$mpg_cat[rowTrain], method = "earth", tuneGrid = expand.grid(degree = 1:5, nprune = 2:25), metric = "ROC", trControl = ctrl)
+
+plot(model.mars)
+coef(model.mars$finalModel)
+
+mars.pred <- predict(model.mars, newdata = data[rowTrain,], type = "prob")[,2]
+roc.mars <- roc(data$mpg_cat[rowTrain], mars.pred)
+```
+
+(d) Perform LDA using the training data. Plot the linear discriminants in LDA.
+
+### Answers
+
+Fit the LDA model using `MASS`, and plot the linear discriminants.
+```{r problem_d_lda}
+set.seed(2022)
+model.lda <- train(mpg_cat~., 
+                   data = data[rowTrain,],
+                   method = "lda",
+                   metric = "ROC",
+                   trControl = ctrl)
+
+
+lda.pred <- predict(model.lda, newdata = data[rowTrain,], type = "prob" )[,2]
+roc.lda <- roc(data$mpg_cat[rowTrain], lda.pred)
+
+lda.fit <- lda(mpg_cat~., data = data, subset = rowTrain)
+plot(lda.fit, col = as.numeric(data$mpg_cat[rowTrain]), abbrev = TRUE)
+```
+
+(e) Which model will you use to predict the response variable? Plot its ROC curve using the test data. Report the AUC and the misclassification error rate.
+
+### Answers
+
+To decide using which model to predict the response, I plot the ROC of the 3 models and compare their AUC on the train data.
+```{r problem_e_auc}
+auc <- c(roc.glm$auc[1], roc.mars$auc[1], roc.lda$auc[1])
+
+
+modelNames <- c("glm","mars","lda")
+ggroc(list(roc.glm, roc.mars, roc.lda), legacy.axes = TRUE) +
+scale_color_discrete(labels = paste0(modelNames, " (", round(auc,3),")"),
+name = "Models (AUC)") +
+geom_abline(intercept = 0, slope = 1, color = "grey")
+
+```
+
+The plot shows that `mars` model has the largest AUC compared to the rest. So I use `mars` to do the prediction. The model summary table below shows the same result.
+```{r}
+res <- resamples(list(GLM = model.glm, MARS = model.mars, LDA = model.lda))
+summary(res)
+```
+
+The ROC of `mars` model on the test set is shown below.
+
+```{r problem_e_predict}
+pred.test <- predict(model.mars, newdata = data[-rowTrain,], type = "prob")[,2]
+roc.test <- roc(data$mpg_cat[-rowTrain], pred.test) 
+plot(roc.test, legacy.axes = TRUE, print.auc = TRUE)
+plot(smooth(roc.test), col = 4, add = TRUE)
+```
+
+The test AUC is `r round(roc.test$auc[1],3)`.
+
+```{r}
+# set a cutoff Accuracy : 0.8793 
+pred.test.prob <- predict(model.mars, newdata = data[-rowTrain,], type = "prob")[,2]
+pred.test.pred = rep("low", length(pred.test.prob))
+pred.test.pred[pred.test.prob>0.5] = "high"
+confusionMatrix(data = relevel(as.factor(pred.test.pred), "low"), reference = data$mpg_cat[-rowTrain], positive = "high")
+
+# use raw prediction Accuracy : 0.8793
+#pred.test.class <- predict(model.mars, newdata = data[-rowTrain,], type = "raw")
+#confusionMatrix(data = relevel(pred.test.class, "low"), reference = data$mpg_cat[-rowTrain], positive = "high")
+
+
+```
+
+The test Accuracy is 0.8793 so the misclassification error rate is 1-Accuracy = `r 1-0.8793`.
