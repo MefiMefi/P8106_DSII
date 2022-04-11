@@ -1,0 +1,194 @@
+---
+title: "P8106-hw2"
+author: 
+ - Renjie Wei
+ - rw2844
+date: "3/7/2022"
+output:
+  pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+```{r}
+library(caret) 
+library(splines)
+library(mgcv) # for gam model
+library(pdp) # for partial dependence plot 
+library(earth) # implement MARS
+library(tidyverse)
+library(ggplot2)
+```
+
+Partition the dataset into two parts: training data (80%) and test data (20%).
+```{r partitioning_data}
+set.seed(2022)
+college_data <- read.csv("./College.csv") %>% select(!College)
+college_data <- na.omit(college_data)
+college_mtx <- model.matrix(Outstate ~.,college_data)[,-1]
+trainRows <- createDataPartition(y = college_data$Outstate, p = 0.8, list = FALSE)
+# design matrix
+train_data <- college_data[trainRows,]
+
+test_data <- college_data[-trainRows,]
+```
+
+(a) Perform exploratory data analysis using the training data (e.g., scatter plots of response vs. predictors).
+
+```{r problem_a_exploratory}
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2, .4, .2, .5)
+theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8, .1, .1, 1)
+theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+
+
+featurePlot(train_data %>% select(!Outstate), train_data$Outstate, plot = "scatter", labels = c("","Y"), type = c("p"), layout = c(4, 4))
+
+```
+From the scatterplots, we can explore the relationships between out-of-state tuition and other predictors. There are some nonlinear trend in `Expend`, `Books`, `Personal`, `PhD`, `Terminal`, `F.Undergrad`, `P.Undergrad`, `Apps`, `Accept`, `Enroll`.
+
+```{r simple_lr}
+predictors_ = c()
+rsq_lm = c()
+for (var_name in colnames(train_data %>% select(-Outstate))) {
+    formula_  = paste("Outstate ~", var_name)
+    model_ = lm(formula = formula(formula_), data = train_data)
+    summary_ = summary(model_)
+    rsq_ = summary_$r.squared
+    predictors_ = c(predictors_, var_name)
+    rsq_lm = c(rsq_lm, rsq_)
+}
+slr_res <- data.frame(
+    variable = predictors_,
+    r_squared = rsq_lm
+)
+arrange(slr_res, r_squared) %>% knitr::kable(digits = 3)
+```
+By fitting simple linear models using each variables as the only predictor, summarizing the $R^2$ of the model, we can see that linear model do not fully illustrate the relationship between predictors and the predicted variable `Outstate`.
+
+(b) Fit smoothing spline models using `Terminal` as the only predictor of `Outstate` for a range of degrees of freedom, as well as the degree of freedom obtained by generalized cross-validation, and plot the resulting fits. Describe the results obtained.
+
+```{r problem_b_smoothing_splines}
+terminal.grid <- seq(from = 0, to = 120, by = 1)
+ps <- list()
+for (i in 1:63){
+    fit_ <- smooth.spline(train_data$Terminal, train_data$Outstate, df = i+1 )
+    df_ <- fit_$df
+    if(df_< i){
+        next
+    }
+    pred_<- predict(fit_,
+                   x = terminal.grid)
+    preddf_ <- data.frame(pred = pred_$y,
+                         terminal = terminal.grid,
+                         df = rep(i+1, length(pred_$y)))
+    ps <- rbind(ps, preddf_)
+}
+
+p.mass <- ggplot(data = train_data, aes(x = Terminal, y = Outstate)) +
+    geom_point(color = rgb(.2, .4, .2, .5))
+p.mass + geom_line(aes(x = terminal, y = pred, group = df, color = df), data = ps[which(ps$df <= 15),]) + theme_bw()
+```
+The plot above shows the fitted smoothing spline models using Terminal as the only predictor of `Outstate` for a range of degree of freedom from 2 to 15. As the `df` increase, the fitted spline curve become more and more wiggly.
+
+```{r problem_b_smoothing_splines_gcv}
+fit.ss <- smooth.spline(train_data$Terminal, train_data$Outstate)
+ss.df <- fit.ss$df
+
+pred.ss <- predict(fit.ss,
+                   x = terminal.grid)
+
+pred.ss.df <- data.frame(pred = pred.ss$y,
+                         terminal = terminal.grid)
+
+p <- ggplot(data = train_data, aes(x = Terminal, y = Outstate)) +
+     geom_point(color = rgb(.2, .4, .2, .5))
+p + geom_line(aes(x = terminal, y = pred), data = pred.ss.df,
+          color = rgb(.8, .1, .1, 1)) + theme_bw()
+```
+
+The degree of freedom obtained by generalized cross-validation is `r ss.df`. The fitted spline curve is relatively smooth than the curves fitted with high degree of freedom. Since their shapes are very close, we would like to choose the simpler model, which is the GCV model.
+
+(c) Fit a generalized additive model (GAM) using all the predictors. Plot the results and explain your findings. Report the test error.
+
+```{r problem_c_gam}
+gam.m1 <- gam(Outstate~ s(Apps) + s(Accept) + s(Enroll)+ s(Top10perc)+s(Top25perc)+s(F.Undergrad)+s(P.Undergrad)+s(Room.Board)+s(Books)+s(Personal)+s(PhD)+s(Terminal)+s(S.F.Ratio)+s(perc.alumni)+s(Expend)+s(Grad.Rate) , data = train_data)
+summary(gam.m1)
+```
+
+The model summary shows that some `edf` equals to `1`, which means these predictors may have linear relationships with `Outstate`.
+
+```{r problem_c_plot}
+plot.gam(gam.m1, pages = 4)
+```
+From the plot we can also see some linear trend in `Apps`, `Enroll`, `P.Undergrad`, `Personal` and `Terminal`.
+
+```{r problem_c_rmse}
+gam.test.predict <- predict.gam(gam.m1, newdata = test_data, type = "response")
+gam.test.mse <- (RMSE(gam.test.predict, test_data$Outstate))^2
+```
+The test MSE of the GAM model is `r gam.test.mse`.
+
+(d) Train a multivariate adaptive regression spline (MARS) model using all the predictors. Report the final model. Report the test error.
+
+Train the MARS model using all predictors.
+```{r problem_d_mars}
+ctrl1 = trainControl(method = "cv", number = 10)
+mars_grid <- expand.grid(degree = 1:5, nprune = 2:15)
+set.seed(2022)
+mars.fit <- train(train_data %>% select(-Outstate), train_data$Outstate, method = "earth", tuneGrid = mars_grid, trControl = ctrl1)
+ggplot(mars.fit)
+```
+
+The final model is given by.
+```{r problem_d_final_model}
+mars.fit$bestTune
+```
+There is `11` coefficients in our final model. Since the `degree = 1`, there is no products of hinge functions in our model. Present the partial dependence plot of an arbitrary predictor in your final model.
+
+The coefficients are shown below.
+```{r problem_d_final_model_coef}
+coef(mars.fit$finalModel)
+```
+
+I made a partial dependence plot of `Accept` , as well as `Accept` and `Expend`.
+```{r problem_d_pdp}
+p1 <- pdp::partial(mars.fit, pred.var = c("Expend"), grid.resolution = 10) %>% autoplot()
+p2 <- pdp::partial(mars.fit, pred.var = c("Enroll", "Expend"),
+grid.resolution = 10) %>%
+pdp::plotPartial(levelplot = FALSE, zlab = "yhat", drape = TRUE,
+screen = list(z = 20, x = -60))
+grid.arrange(p1, p2, ncol = 2)
+```
+
+
+```{r problem_d_testerr}
+mars.predict <- predict(mars.fit, newdata = test_data)
+mars.mse <- (RMSE(mars.predict, test_data$Outstate))^2
+```
+The MSE of MARS model is `r mars.mse`
+
+(e) In this data example, do you prefer the use of MARS model over a linear model when predicting the out-of-state tuition? Why?
+
+I fit a linear model and an elastic-net model to determine whether a MARS model is better than linear ones. I compared the test MSE of these models.
+```{r model_comparsion}
+set.seed(2022)
+lm.fit <- train(train_data %>% select(-Outstate), train_data$Outstate, method = "lm")
+enet.fit <- train(train_data %>% select(-Outstate), train_data$Outstate, method = "glmnet", tuneGrid = expand.grid(alpha = seq(0, 1, length = 21), lambda = exp(seq(7, -1, length = 200))), trControl = ctrl1)
+#myCol<- rainbow(25)
+#myPar <- list(superpose.symbol = list(col = myCol),
+#                    superpose.line = list(col = myCol))
+# plot(enet.fit, par.settings = myPar)
+lm.predict <- predict(lm.fit,newdata = test_data %>% select(-Outstate))
+lm.mse <- (RMSE(test_data$Outstate, lm.predict))^2
+enet.predict <- predict(enet.fit,newdata = test_data %>% select(-Outstate))
+enet.mse <- (RMSE(test_data$Outstate, enet.predict))^2
+
+tibble(model = c("MARS", "Multiple Linear Regression", "Elastic Net"),
+       `Test MSE` = c(mars.mse, lm.mse, enet.mse)) %>% knitr::kable()
+```
+We can see that the MARS model has the lowest test MSE. Hence, I prefer MARS model when predicting the out-of-state tuition.

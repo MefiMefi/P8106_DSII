@@ -1,0 +1,218 @@
+---
+title: "P8106-hw1"
+author: 
+ - Renjie Wei
+ - rw2844
+date: "2/15/2022"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r load-packages}
+library(ISLR)
+library(glmnet)
+library(caret)
+library(corrplot)
+library(plotmo)
+library(tidyverse)
+library(pls)
+```
+
+## Create train and test data
+
+```{r read-data}
+# tried to do some manipulations on the data but it turned out to be redundant
+train_data <- 
+  read.csv(file = "housing_training.csv") %>% 
+  janitor::clean_names() 
+
+test_data <- read.csv(file = "housing_test.csv") %>% 
+  janitor::clean_names() 
+
+train_data <- na.omit(train_data)
+x_train <- model.matrix(sale_price ~., train_data)[,-1]
+y_train <- train_data$sale_price
+
+test_data <- na.omit(test_data)
+x_test <- model.matrix(sale_price ~., test_data)[,-1]
+y_test <- test_data$sale_price
+#corrplot(cor(x_train), type = "full")
+
+# Using the default cross-validation as my train control method
+myCtrl = trainControl(method = "cv")
+```
+
+## Problem a
+
+I fit a multiple linear regression using `lm.fit` fucntion.
+```{r problem-1}
+set.seed(2022)
+lm.fit = train(
+  x = x_train,
+  y = y_train,
+  method = "lm",
+  trControl = myCtrl
+)
+summary(lm.fit)
+
+lm.predict <- predict(lm.fit, newdata = x_test)
+lm.mse = mean((y_test - lm.predict)^2)
+```
+
+**Potential disadvantages:**
+
+- First, collinearity will cause problem. Which means if there are strong correlations among predictors, the variance of coefficients tends to increase.
+- Second, the linear regression methods are sensitive to outliers.
+- Third, if the true relationships between $X$ and $Y$ are non-linear, the linear model cannot well performance.
+- In this special case, we are including many non-informative variables, as we can see a lot of predictors with insignificant coefficients. Although we may got BLUE estimators, but all of them may perform poorly.
+
+
+## Problem b
+
+I fit the lasso model using `caret`
+```{r problem-2}
+set.seed(2022)
+myCtrl_1se = trainControl(
+  method = "cv",selectionFunction = "oneSE"
+)
+lasso.1se.fit <- train(
+  x = x_train, 
+  y = y_train,
+  method = "glmnet",
+  tuneGrid = expand.grid(
+    alpha = 1,
+    lambda = exp(seq(8, -2, length = 200))
+  ),
+  trControl = myCtrl_1se
+)
+# this is for model comparsion
+lasso.min.fit <- train(
+  x = x_train, 
+  y = y_train,
+  method = "glmnet",
+  tuneGrid = expand.grid(
+    alpha = 1,
+    lambda = exp(seq(8, -2, length = 200))
+  ),
+  trControl = myCtrl
+)
+  
+# visualization of the 1SE rule
+ggplot(lasso.1se.fit, log = "x", highlight = T)
+# coefficients matrix under 1SE rule
+coef(lasso.1se.fit$finalModel, lasso.1se.fit$bestTune$lambda)
+lasso.1se.fit$bestTune
+
+lasso.1se.predict <- predict(lasso.1se.fit,newdata = x_test)
+lasso.1se.mse <- mean((y_test - lasso.1se.predict)^2)
+# for model comparsion only
+lasso.min.predict <- predict(lasso.min.fit,newdata = x_test)
+lasso.min.mse <- mean((y_test - lasso.min.predict)^2)
+```
+
+From the `40 X 1` sparse Matrix given by `coef(lasso.1se.fit$finalModel, lasso.1se.fit$bestTune$lambda)`, we can see that under the 1SE rule, 30 out of a total 40 predictors are included in the model.
+
+## Problem c
+
+Same as (b), I fitted the elastic-net model using `caret`. The `tuneGrid` is designed by the following form after some tries on searching the ideal tuning parameter intervals.
+```{r problem-3}
+set.seed(2022)
+enet.fit <- train(
+  x = x_train, 
+  y = y_train,
+  method = "glmnet",
+  tuneGrid = expand.grid(
+    alpha = seq(0, 1, length = 21),
+    lambda = exp(seq(7, -1, length=200))
+  ),
+  trControl = myCtrl
+)
+
+myCol<- rainbow(25)
+myPar <- list(superpose.symbol = list(col = myCol),
+                    superpose.line = list(col = myCol))
+plot(enet.fit, par.settings = myPar)
+enet.fit$bestTune$alpha
+enet.fit$bestTune$lambda
+
+enet.predict <- predict(enet.fit,newdata = x_test)
+enet.mse <- mean((y_test - enet.predict)^2)
+```
+
+Based on the fitted model, the selected tuning parameters are $\alpha$=`r enet.fit$bestTune$alpha`  and $\lambda$=`r enet.fit$bestTune$lambda`. And the test error of this model is `r round(enet.mse)`.
+
+## Problem c
+
+Since there are some issue when fitting a partial least square model using `caret`, I switched to the `pls` package to fit my PLS model.
+
+```{r problem-4-plsr}
+set.seed(2022)
+pls.fit <- plsr(sale_price~., 
+                data = train_data, 
+                scale = TRUE,  
+                validation = "CV")
+
+summary(pls.fit)
+validationplot(pls.fit, val.type="MSEP", legendpos = "topright")
+cv.mse <- RMSEP(pls.fit)
+ncomp.cv <- which.min(cv.mse$val[1,,])-1
+
+pls.predict <- predict(pls.fit, newdata = test_data, ncomp = ncomp.cv)
+pls.mse = mean((y_test - pls.predict)^2)
+```
+
+The model result shows that there are `r ncomp.cv` components included in this model.
+
+## Problem e
+
+Since I use the same seed with `set.seed(2022)` and using the same resampling method in estimating test errors in each model, which is the cross-validation, I just summarized these models' performance on the test data using MSE.
+
+From the box plot, we can see that the `lasso_1se` model has the lowest mean test error.
+```{r summary_plot}
+lm_test_err = (lm.predict-y_test)^2
+test_len = length(lm_test_err)
+lasso_min_test_err = (lasso.min.predict-y_test)^2
+#length(lasso_min_test_err)
+lasso_1se_test_err = (lasso.1se.predict-y_test)^2
+#length(lasso_1se_test_err)
+enet_test_err = (enet.predict-y_test)^2
+#length(enet_test_err)
+pls_test_err = (pls.predict-y_test)^2
+#length(pls_test_err)
+
+
+summary_tab <-
+  tibble(
+    error = c(lm_test_err, lasso_min_test_err, lasso_1se_test_err, enet_test_err, pls_test_err),
+    model = c(rep("lm", test_len),rep("lasso_min",test_len),rep("lasso_1se",test_len),rep("enet",test_len),rep("pls",test_len))
+  )
+
+ggplot(data = summary_tab,aes(x = factor(model, level = c("lm", "lasso_min", "lasso_1se", "enet", "pls")), y = error, color = model))+
+  geom_boxplot()+
+  scale_y_continuous(trans = "log")+
+  xlab("Models")+
+  ylab("Test Error")
+```
+
+And I summarized some statistics of the test errors of the different models. Same as the plot above, the `lasso_1se` has the lowest test MSE.
+```{r summary_table}
+summary_tab %>% 
+  group_by(model) %>% 
+  summarize(
+    Min = min(error),
+    Q_25 = quantile(error,probs = 0.25),
+    Median = median(error),
+    MSE = mean(error),
+    Q_75 = quantile(error, probs = 0.75),
+    Max = max(error)
+  ) %>% 
+  knitr::kable()
+```
+
+As a conclusion, considering the test MSE, I would like to choose the LASSO model using the 1SE rule for predicting the response.

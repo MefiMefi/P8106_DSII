@@ -1,0 +1,78 @@
+Gr_Liv_Area (Continuous): Above grade (ground) living area square feet
+		
+First_Flr_SF (Continuous): First Floor square feet
+ 
+Second_Flr_SF (Continuous): Second floor square feet
+
+Total_Bsmt_SF (Continuous): Total square feet of basement area
+
+Low_Qual_Fin_SF (Continuous): Low quality finished square feet (all floors)
+
+Wood_Deck_SF (Continuous): Wood deck area in square feet
+
+Open_Porch_SF (Continuous): Open porch area in square feet
+
+Bsmt_Unf_SF (Continuous): Unfinished square feet of basement area
+
+Mas_Vnr_Area (Continuous): Masonry veneer area in square feet
+
+Garage_Cars (Discrete): Size of garage in car capacity
+
+Garage_Area (Continuous): Size of garage in square feet
+
+Year_Built (Discrete): Original construction date
+
+TotRms_AbvGrd (Discrete): Total rooms above grade (does not include bathrooms)
+
+Full_Bath (Discrete): Full bathrooms above grade
+
+Overall_Qual (Ordinal): Rates the overall material and finish of the house
+
+       	Very Excellent
+       	Excellent
+       	Very Good
+       	Good
+       	Above Average
+       	Average
+       	Below Average
+       	Fair
+
+Kitchen_Qual (Ordinal): Kitchen quality
+
+       	Excellent
+       	Good
+       	Typical/Average
+       	Fair
+       	
+Fireplaces (Discrete): Number of fireplaces
+
+Fireplace_Qu (Ordinal): Fireplace quality
+
+       Excellent - Exceptional Masonry Fireplace
+       Good - Masonry Fireplace in main level
+       Average - Prefabricated Fireplace in main living area or Masonry Fireplace in basement
+       Fair - Prefabricated Fireplace in basement
+       Poor - Ben Franklin Stove
+       No Fireplace
+		
+Exter_Qual (Ordinal): Evaluates the quality of the material on the exterior 
+		
+       	Excellent
+       	Good
+       	Average/Typical
+       	Fair
+       	Poor
+
+Lot_Frontage (Continuous): Linear feet of street connected to property
+
+Lot_Area (Continuous): Lot size in square feet
+		
+Latitude (Continuous)
+
+Longitude (Continuous)
+
+Misc_Val (Continuous): $Value of miscellaneous feature
+
+Yr_Sold (Discrete): Year Sold (YYYY)
+		
+Sale_Price (Continuous): Sale price $$
