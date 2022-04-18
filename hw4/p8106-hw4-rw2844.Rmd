@@ -1,9 +1,9 @@
 ---
-title: "P8106-hw3"
+title: "P8106-hw4"
 author: 
  - Renjie Wei
  - rw2844
-date: "3/19/2022"
+date: "4/10/2022"
 output:
   pdf_document
 ---
@@ -20,7 +20,7 @@ library(rpart.plot)
 library(party)
 library(partykit)
 library(pROC)
-library(randomForest)
+#library(randomForest)
 library(ranger)
 library(gbm)
 library(pdp)
@@ -91,12 +91,15 @@ rf.fit <- train(Outstate ~ . ,
                 subset = rowTrain,
                 method = "ranger",
                 tuneGrid = rf.grid,
-                metric = "ROC",
                 trControl = ctrl)
 
 stopCluster(cl)
 registerDoSEQ()
+ggplot(rf.fit, highlight = TRUE)
+rf.fit$bestTune
 ```
+
+The best tuning parameters are `mtry = 11`, `splitrule = variance` and `min.node.size = 4`.
 
 I extracted the variable importance from the fitted model by permutation.
 
@@ -114,7 +117,7 @@ barplot(sort(ranger::importance(rf.final.per), decreasing = FALSE),
         col = colorRampPalette(colors = c("cyan","blue"))(19))
 ```
 
-From the variable importance plot we can see that `Expend` and `Room.Board` are the top 2 most important variables.
+From the variable importance plot we can see that `Expend`, `Room.Board` and `Accept` are the top 3 most important variables.
 
 ```{r problem_1_b_test}
 rf.predict <- predict(rf.fit, newdata = data[-rowTrain,])
@@ -130,7 +133,7 @@ Perform boosting on the training data. Report the variable importance and the te
 ### Answers
 
 I built the boosting model using `caret`.
-```{r problem_1_b_fit}
+```{r problem_1_c_fit}
 gbm.grid <- expand.grid(n.trees = c(2000, 3000, 4000, 5000),
                         interaction.depth = 1:6,
                         shrinkage = seq(0.001, 0.005, by = 0.002),
@@ -153,10 +156,11 @@ registerDoSEQ()
 ggplot(gbm.fit, highlight = TRUE)
 gbm.fit$bestTune
 ```
+The best tuning parameters are `n.trees = 2000`, `interaction.depth = 6`, `shrinkage = 0.003` and `nminobsinode = 8`.
 
 I extracted the variable importance from the fitted model by permutation.
 
-```{r problem_1_b_vi}
+```{r problem_1_c_vi}
 gbm.final.per <- ranger(Outstate ~ . , 
                         data[rowTrain,],
                         n.trees = gbm.fit$bestTune[[1]], 
@@ -172,9 +176,9 @@ barplot(sort(ranger::importance(gbm.final.per), decreasing = FALSE),
         col = colorRampPalette(colors = c("cyan","blue"))(19))
 ```
 
-From the variable importance plot we can see that `Expend` and `Room.Board` are the top 2 most important variables.
+From the variable importance plot we can see that `Expend`, `Room.Board` and `Apps` are the top 3 most important variables, which are slightly different from what we got from random forest model.
 
-```{r problem_1_b_test}
+```{r problem_1_c_test}
 gbm.predict <- predict(gbm.fit, newdata = data[-rowTrain,])
 gbm.RMSE <- RMSE(gbm.predict, data$Outstate[-rowTrain])
 ```
@@ -197,7 +201,7 @@ rowTrain1 <- createDataPartition(y = OJ$Purchase, p = 0.8, list = FALSE)
 
 Build a classification tree using the training data, with `Purchase` as the response and the other variables as predictors. Use cross-validation to determine the tree size and create a plot of the final tree. Which tree size corresponds to the lowest cross-validation error? Is this the same as the tree size obtained using the 1 SE rule?
 
-I use `caret` to fit the classification tree, and plot the final tree. Mentioning that I use `metric = "Accuracy"` to make the model from `caret` comparable to the model from `rpart`.
+I use `caret` to fit the classification tree, and plot the final tree. Mentioning that I use `metric = "Accuracy"` to make the model from `caret` comparable to the model from `rpart`. And I plot the final tree.
 
 ```{r problem_2_a_fit}
 ctrl1 <- trainControl(method = "cv",
@@ -216,7 +220,7 @@ rpart.plot(rpart.fit.OJ$finalModel)
 
 Using the lowest cross-validation error, we can see the tree size = 4.
 
-For the implementation of 1SE rule, I use `rpart` to fit the model.
+For the implementation of 1SE rule, I use `rpart` to fit the model. And plot the pruned tree under 1SE rule.
 
 ```{r problem_2_a_1se}
 set.seed(2022)
@@ -252,9 +256,9 @@ ctrl2 <- trainControl(method = "cv",
                      summaryFunction = twoClassSummary)
 
 
-gbmA.grid <- expand.grid(n.trees = c(2000,3000,4000,5000),
+gbmA.grid <- expand.grid(n.trees = c(2000,3000,4000,5000),#
                          interaction.depth = 1:6,
-                         shrinkage = c(0.0005,0.001,0.002),
+                         shrinkage = c(0.0005,0.001,0.002),#
                          n.minobsinnode = 1)
 set.seed(2022)
 
@@ -280,6 +284,11 @@ ggplot(gbmA.fit, highlight = TRUE)
 gbmA.pred <- predict(gbmA.fit, newdata = OJ[-rowTrain1,], type = "raw")
 error.rate.gbmA <- mean(gbmA.pred != OJ$Purchase[-rowTrain1])
 ```
+
+```{r}
+summary(gbmA.fit$finalModel, las = 2, cBars = 19, cex.names = 0.6) %>% knitr::kable(digits = 3, caption = "Variable importance from boosting model")
+```
+From the variable importance plot (the relative influence plot), we can see that `LoyalCH` and `PriceDiff` are the top 2 most important variables.
 
 The test error rate is `r round(error.rate.gbmA, 3)`.
 

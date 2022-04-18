@@ -1,0 +1,241 @@
+---
+title: "Support Vector Machines"
+author: "Yifei Sun"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '2'
+header-includes:
+- \usepackage{fancyhdr}
+- \usepackage{lipsum}
+- \pagestyle{fancy}
+- \fancyhead[R]{\thepage}
+- \fancypagestyle{plain}{\pagestyle{fancy}}
+--- 
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r, echo = T, message = FALSE, results='hide', warning=FALSE}
+library(mlbench)
+library(ISLR)
+library(caret)
+library(e1071)
+library(kernlab)
+```
+
+
+
+
+We use the Pima Indians Diabetes Database for illustration. The outcome is a binary variable `diabetes`. 
+
+```{r}
+data(PimaIndiansDiabetes2)
+dat <- na.omit(PimaIndiansDiabetes2)
+dat$diabetes <- factor(dat$diabetes, c("pos", "neg"))
+
+set.seed(2022)
+rowTrain <- createDataPartition(y = dat$diabetes,
+                                p = 0.75,
+                                list = FALSE)
+```
+
+
+
+## Using `e1071`
+
+Check https://cran.r-project.org/web/packages/e1071/vignettes/svmdoc.pdf for more details.
+
+### Linear boundary
+
+Most real data sets will not be fully separable by a linear boundary. Support vector classifiers with a tuning parameter `cost`, which quantifies the penalty associated with having an observation on the wrong side of the classification boundary, can be used to build a linear boundary.
+
+```{r}
+set.seed(1)
+linear.tune <- tune.svm(diabetes ~ . , 
+                        data = dat[rowTrain,], 
+                        kernel = "linear", 
+                        cost = exp(seq(-5,2,len=50)),
+                        scale = TRUE)
+plot(linear.tune)
+# summary(linear.tune)
+linear.tune$best.parameters
+
+best.linear <- linear.tune$best.model
+summary(best.linear)
+
+pred.linear <- predict(best.linear, newdata = dat[-rowTrain,])
+
+confusionMatrix(data = pred.linear, 
+                reference = dat$diabetes[-rowTrain])
+
+plot(best.linear, dat[rowTrain,], 
+     glucose ~ mass,
+     slice = list(pregnant = 5, triceps = 20,
+                  insulin = 20, pressure = 75,
+                  pedigree = 1, age = 50),
+     grid = 100)
+```
+
+### Radial kernel
+
+Support vector machines can construct classification boundaries that are nonlinear in shape. We use the radial kernel.
+
+```{r}
+set.seed(1)
+radial.tune <- tune.svm(diabetes ~ . , 
+                        data = dat[rowTrain,], 
+                        kernel = "radial", 
+                        cost = exp(seq(-1,4,len=20)),
+                        gamma = exp(seq(-6,-2,len=20)))
+
+plot(radial.tune, transform.y = log, transform.x = log, 
+     color.palette = terrain.colors)
+# summary(radial.tune)
+
+best.radial <- radial.tune$best.model
+summary(best.radial)
+
+pred.radial <- predict(best.radial, newdata = dat[-rowTrain,])
+
+confusionMatrix(data = pred.radial, 
+                reference = dat$diabetes[-rowTrain])
+
+plot(best.radial, dat[rowTrain,], 
+     glucose ~ mass,
+     slice = list(pregnant = 5, triceps = 20,
+                  insulin = 20, pressure = 75,
+                  pedigree = 1, age = 50),
+     grid = 100,
+     symbolPalette = c("cyan","darkblue"),
+     color.palette = heat.colors)
+```   
+
+## Using `kernlab`
+
+Check https://cran.r-project.org/web/packages/kernlab/vignettes/kernlab.pdf for more details.
+
+```{r}
+x_train <- as.matrix(dat[rowTrain, 1:8])
+x_test <- as.matrix(dat[-rowTrain, 1:8])
+
+linear <- ksvm(x = x_train, 
+               y = dat$diabetes[rowTrain], 
+               type = "C-svc", 
+               kernel = "vanilladot",
+               C = 1,
+               scaled = TRUE)
+
+pred.linear2 <- predict(linear, newdata = x_test)
+
+
+# "?dots" for definition of kernel functions 
+
+set.seed(1)
+rbf <- ksvm(x = x_train, 
+            y = dat$diabetes[rowTrain], 
+            type = "C-svc", 
+            kernel = "rbfdot" ,
+            kpar = "automatic",
+            C = 1)
+
+pred.rbf <- predict(rbf, newdata = x_test)
+```
+
+## Using `caret`
+
+```{r}
+ctrl <- trainControl(method = "cv")
+
+# kernlab
+set.seed(1)
+svml.fit <- train(diabetes ~ . , 
+                  data = dat[rowTrain,], 
+                  method = "svmLinear",
+                  # preProcess = c("center", "scale"),
+                  tuneGrid = data.frame(C = exp(seq(-5,2,len=50))),
+                  trControl = ctrl)
+
+plot(svml.fit, highlight = TRUE, xTrans = log)
+
+# e1071
+set.seed(1)
+svml.fit2 <- train(diabetes ~ . , 
+                  data = dat[rowTrain,], 
+                  method = "svmLinear2",
+                  tuneGrid = data.frame(cost = exp(seq(-5,2,len=50))),
+                  trControl = ctrl)
+
+plot(svml.fit2, highlight = TRUE, xTrans = log)
+```
+
+
+```{r, fig.width=15, fig.height=8}
+svmr.grid <- expand.grid(C = exp(seq(-1,4,len=20)),
+                         sigma = exp(seq(-6,-2,len=20)))
+
+# tunes over both cost and sigma
+set.seed(1)             
+svmr.fit <- train(diabetes ~ . , dat, 
+                  subset = rowTrain,
+                  method = "svmRadialSigma",
+                  tuneGrid = svmr.grid,
+                  trControl = ctrl)
+
+myCol<- rainbow(20)
+myPar <- list(superpose.symbol = list(col = myCol),
+              superpose.line = list(col = myCol))
+
+plot(svmr.fit, highlight = TRUE, par.settings = myPar)
+
+# tune over cost and uses a single value of sigma based on kernlab's sigest function
+set.seed(1)             
+svmr.fit2 <- train(diabetes ~ . , dat, 
+                   subset = rowTrain,
+                   method = "svmRadialCost",
+                   tuneGrid = data.frame(C = exp(seq(-3,3,len=20))),
+                   trControl = ctrl)
+
+# Platt’s probabilistic outputs; use with caution
+set.seed(1)             
+svmr.fit3 <- train(diabetes ~ . , dat, 
+                   subset = rowTrain,
+                   method = "svmRadialCost",
+                   tuneGrid = data.frame(C = exp(seq(-3,3,len=20))),
+                   trControl = ctrl,
+                   prob.model = TRUE) 
+# predict(svmr.fit3, newdata = x_test, type = "prob")
+
+set.seed(1)             
+rpart.fit <- train(diabetes ~ . , dat, 
+                   subset = rowTrain,
+                   method = "rpart",
+                   tuneLength = 50,
+                   trControl = ctrl)
+```
+
+```{r}
+resamp <- resamples(list(svmr = svmr.fit, svmr2 = svmr.fit2,
+                         svml = svml.fit, svml2 = svml.fit2,
+                         rpart = rpart.fit))
+bwplot(resamp)
+```
+
+We finally look at the test data performance.
+```{r}
+pred.svml <- predict(svml.fit, newdata = dat[-rowTrain,])
+pred.svmr <- predict(svmr.fit, newdata = dat[-rowTrain,])
+
+confusionMatrix(data = pred.svml, 
+                reference = dat$diabetes[-rowTrain])
+
+confusionMatrix(data = pred.svmr, 
+                reference = dat$diabetes[-rowTrain])
+```
